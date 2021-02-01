@@ -1,7 +1,9 @@
 ---
 title: "EC8855_PS1_Auction"
 author: "Ying Wang"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 #### Load the data of simulated bids from a First Price Sealed Bid (FPSB) auction with three bidders.
