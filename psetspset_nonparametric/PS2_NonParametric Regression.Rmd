@@ -1,0 +1,145 @@
+---
+title: "PS2_Nonparametric Regression"
+author: "Ying Wang"
+---
+
+
+### Load the data that contains one year worth "locational marginal prices" (lmp's) for a node in Brighton.
+```{r, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(splines)
+data <- read_csv("nodelmp.csv", col_names = TRUE)
+x <- data$temp
+y <- data$lmp
+df1 <- data.frame(x,y)
+df <- data.frame(data$temp,data$lmp,data$hrank) 
+```
+
+### 1. Make a bin scatter plot of the relationship between the maximum price each day and the temperature.
+```{r, message = FALSE, warning = FALSE}
+ggplot(subset(df,data.hrank %in% c("1")), aes(x=data.temp,y=data.lmp))+
+    geom_point(alpha = 1/2, aes(x=data.temp,y=data.lmp)) +
+    stat_summary_bin(fun.y='mean', color='red', geom='point') 
+```
+
+The relationship does not look linear.
+
+### 2. Predict the relationship using a polynomial in temperature, for polynomials varying from degree $p=1$ to $p=10$.
+```{r, message = FALSE, warning = FALSE}
+poly <- ggplot(df) + geom_point(alpha = 1/2,aes(x=data.temp,y=data.lmp))
+
+x.grid <- seq(min(x), max(x))
+
+poly.plot <- function(p){
+  y.grid <- predict(lm(y ~ poly(x,p)), data.frame(x=x.grid)) 
+  poly <- poly + geom_line(data=data.frame(x.grid,y.grid), mapping = aes(x=x.grid,y=y.grid), col=p)
+  
+  return(poly)
+}
+
+for(p in 1:10){
+  poly <- poly.plot(p)
+}
+  
+poly
+```
+
+Polynomials with higher degrees seem to fit better.
+
+### 3. Repeat the above exercise, using k-fold cross validation to select between polynomials of degree 1 through 10. Use $k=10$.
+```{r, message = FALSE, warning = FALSE}
+set.seed(42) 
+df1<-df1[sample(nrow(df1)),]
+fold <- cut(seq(1,nrow(df1)),breaks=10,labels=FALSE)
+cv <- function(p){
+  mse <- 0
+  for(i in 1:10){
+    ind <- which(fold==i, arr.ind=TRUE)
+    datatest <- df1[ind, ]
+    datatrain <- df1[-ind, ]
+    y_cv <- predict(lm(y ~ poly(x,p),data=datatrain), data.frame(x=datatest$x))
+    mse <- mse + mean((y_cv-datatest$y)^2)
+  }
+  return(mse/10)
+}
+p_cv <- which.min(sapply(seq(1,10,length=10), cv))
+p_cv
+```
+
+CV suggests to use p=7.
+
+### 4. Plot the predicted lmp for $p=1,2,p^{cv},10$, where $p^{cv}$ is your preferred degree from cross-validation.
+```{r, message = FALSE, warning = FALSE}
+
+y_1 <- predict(lm(y ~ poly(x,1)), data.frame(x=x.grid))
+y_2 <- predict(lm(y ~ poly(x,2)), data.frame(x=x.grid))
+y_cv <- predict(lm(y ~ poly(x,p_cv)), data.frame(x=x.grid))
+y_10 <- predict(lm(y ~ poly(x,10)), data.frame(x=x.grid))
+polys <- ggplot(df) +
+  geom_point(alpha = 1/2,aes(x=data.temp,y=data.lmp)) +
+  geom_line(data=data.frame(x.grid,y_1), mapping = aes(x=x.grid,y=y_1, col='p=1')) +
+  geom_line(data=data.frame(x.grid,y_2), mapping = aes(x=x.grid,y=y_2, col='p=2')) +
+  geom_line(data=data.frame(x.grid,y_cv), mapping = aes(x=x.grid,y=y_cv, col='p=p_cv')) +
+  geom_line(data=data.frame(x.grid,y_10), mapping = aes(x=x.grid,y=y_10, col='p=10')) +
+  scale_color_manual(values = c('red', 'yellow', 'blue','green')) 
+
+polys
+```
+
+
+### 5. Predict lmp using a natural cubic spline in temperature. Use k-fold cross-validation to find the optimal number of knots, ranging from 1 to 10.
+```{r, message = FALSE, warning = FALSE}
+cv_ns <- function(p){
+  mse <- 0
+  for(i in 1:10){
+    ind <- which(fold==i,arr.ind=TRUE)
+    datatest <- df1[ind, ]
+    datatrain <- df1[-ind, ]
+    y_cv_ns <- predict(lm(y ~ ns(x, df=p),data=datatrain),data.frame(x=datatest$x))
+    mse <- mse + mean((y_cv_ns-datatest$y)^2)
+  }
+  return(mse/10)
+}
+p_cv_ns<- which.min(sapply(seq(2,11,length=10),cv_ns))
+
+p_cv_ns
+
+```
+
+### 6. Predict lmp using a lowess/ loess regression (using the default bandwidth/ span). 
+### Plot your preferred polynomial prediction ($p^{cv}$), your preferred spline prediction, and the lowess prediction.
+```{r, message = FALSE, warning = FALSE}
+y_cv <- predict(lm(y ~ poly(x,p_cv)), data.frame(x=x.grid))
+y_ns <- predict(lm(y ~ ns(x, df=p_cv_ns+1)), data.frame(x=x.grid))
+y_loess <- predict(loess(y~x), data.frame(x=x.grid))
+
+ggplot(df) +
+  geom_point(alpha = 1/2,aes(x=data.temp,y=data.lmp)) +
+  geom_line(data=data.frame(x.grid,y_cv), mapping = aes(x=x.grid,y=y_cv, col = 'p=p_cv')) +
+  geom_line(data=data.frame(x.grid,y_ns), mapping = aes(x=x.grid,y=y_ns,col = 'p=p_cv_ns')) +
+  geom_line(data=data.frame(x.grid,y_loess ), mapping = aes(x=x.grid,y=y_loess , col = 'loess')) +
+  scale_color_manual(values = c('red', 'yellow', 'blue')) 
+```
+
+
+### 7. Plot the residuals for each of these curves against temperature.
+```{r, message = FALSE, warning = FALSE}
+res_cv <- (lm(y ~ poly(x,p_cv))$fitted - y)
+res_ns <- (lm(y ~ ns(x, df=p_cv_ns+1))$fitted - y)
+res_loess <- (loess(y~x)$fitted - y)
+
+ggplot(df) +
+  stat_summary_bin(fun.y='mean', geom='point', aes(x=data.temp,y=res_cv,col = 'p=p_cv')) +
+  stat_summary_bin(fun.y='mean', geom='point', aes(x=data.temp,y=res_ns,col = 'p=p_cv_ns')) +
+  stat_summary_bin(fun.y='mean', geom='point', aes(x=data.temp,y=res_loess,col = 'loess')) +
+  scale_color_manual(values = c('red', 'yellow', 'blue')) 
+```
+
+
+For Loess polynomial prediction, it has relatively high residuals at the boundaries. It either overstimates or underestimates at both left and right boundaries. It performs well in the interior and has relatively low residuals.
+
+For natural spline prediction, it has a relatively high residual at the right boundary, which tends to cause overestimation. It performs well in the interior and near left bourndary.
+
+For preferred polynomial prediction, it also has a relatively high residual at the right boundary but this positive residual is smaller than that of natural spline prediction. It also performs well in the interior and near left bourndary. 
+
+
