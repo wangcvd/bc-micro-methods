@@ -1,0 +1,105 @@
+---
+title: "PS3_Model Selection"
+author: "Ying Wang"
+---
+
+
+### Load the modified version of the HR data 
+```{r, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(caret)
+library(glmnet)
+
+data <- read_csv("boston_cl.csv", col_names = TRUE)
+data <- data[,c(2:15)]
+
+set.seed(42)
+train.sample <- data$medv %>% createDataPartition(p=0.8, list=FALSE)
+train.data<- data[train.sample, ]
+test.data <- data[-train.sample, ]
+```
+
+### 1. Report the correlation of these variables. 
+```{r, message = FALSE, warning = FALSE}
+corr <- cor(data)
+round(corr,2)
+```
+It shows rad and tax have high correlation, which is 0.91. 
+
+### 2. Estimate the original HR model using the training data. Project the the log(Median House Price) onto all of the other variables. Everything should enter linearly, except for `NOx` and `RM`.
+```{r, message = FALSE, warning = FALSE}
+reg_origin <- lm(log(medv) ~ . + I(nox^2) + I(rm^2) - nox - rm, data = train.data)
+coef(reg_origin, reg_origin$coefficients)
+```
+
+### 3. Estimate the model using LASSO. Use k=10 fold cross validation to select lambda.
+```{r, message = FALSE, warning = FALSE}
+x_train <- model.matrix(log(medv) ~ . + I(nox^2) + I(rm^2) - nox - rm, data = train.data)[,-1]
+y_train <- log(train.data$medv)
+cv_lasso<- cv.glmnet(x_train, y_train, alpha = 1, family_train = "gaussian", nfolds = 10)
+
+reg_lasso <- glmnet(x_train, y_train, alpha = 1, family_train = "gaussian", lambda = cv_lasso$lambda.lse) 
+coef(reg_lasso, cv_lasso$lambda.1se)
+```
+The model using LASSO drops zn, indus, age and rad.
+
+### 4. Estimate the model using Ridge.
+```{r, message = FALSE, warning = FALSE}
+cv_ridge <- cv.glmnet(x_train, y_train, alpha = 0, family_train = "gaussian", nfolds = 10)
+
+reg_ridge <- glmnet(x_train, y_train, alpha = 0, family_train = "gaussian", lambda = cv_ridge$lambda.lse) 
+coef(reg_ridge, cv_ridge$lambda.1se)
+```
+
+### 5. Expand the data to contain the square term of all variables. Then run Lasso on this expanded data set.
+```{r, message = FALSE, warning = FALSE}
+x_sq <- cbind(train.data[,-14], (train.data[,-14])^2)
+colnames(x_sq)[14:26] <- paste(colnames(x_sq)[14:26], "sqr")
+x_sqr <- model.matrix(~ .,data = x_sq)[,-1]
+
+cv_lasso_sqr <- cv.glmnet(x_sqr, y_train, alpha = 1, family_train = "gaussian", nfolds = 10)
+
+reg_lasso_sqr <- glmnet(x_sqr, y_train, alpha = 1, family_train = "gaussian", lambda = cv_lasso_sqr$lambda.lse) 
+coef(reg_lasso_sqr, cv_lasso_sqr$lambda.1se)
+```
+
+After expanding the data to contain the square term of all variables, besides nox and rm squre terms, the model using LASSO contains additional crim, zn, indus, chas, age and lstat squre terms.
+
+### 6. Report the internal MSE and test data MSE for HR's original model; Lasso and Ridge on the original covariates; and Lasso on the full set of second order terms.
+```{r, message = FALSE, warning = FALSE}
+mse_origin <- mean((reg_origin$fitted.values - log(train.data$medv))^2)
+
+reg_lasso_predict <- predict(reg_lasso, newx = x_train, s = cv_lasso$lambda.1se)
+mse_lasso <- mean((reg_lasso_predict - log(train.data$medv))^2)
+
+reg_ridge_predict <- predict(reg_ridge, newx = x_train, s = cv_ridge$lambda.1se)
+mse_ridge <- mean((reg_ridge_predict - log(train.data$medv))^2)
+
+reg_lasso_sqr_predict <- predict(reg_lasso_sqr, newx = x_sqr, s = cv_lasso_sqr$lambda.1se)
+mse_lasso_sqr <- mean((reg_lasso_sqr_predict - log(train.data$medv))^2)
+
+mse.train <- rbind(mse_origin, mse_lasso, mse_ridge, mse_lasso_sqr)
+mse.train
+
+x.test <- model.matrix(log(medv) ~ . + I(nox^2) + I(rm^2) - nox - rm, data = test.data)[,-1]
+
+mse_origin.test <- mean((predict(reg_origin, newdata = test.data)- log(test.data$medv))^2)
+
+reg_lasso_predict.test <- predict(reg_lasso, newx = x.test, s = cv_lasso$lambda.1se)
+mse_lasso.test <- mean((reg_lasso_predict.test - log(test.data$medv))^2)
+
+reg_ridge_predict.test <- predict(reg_ridge, newx = x.test, s = cv_ridge$lambda.1se)
+mse_ridge.test <- mean((reg_ridge_predict.test - log(test.data$medv))^2)
+
+x_sq.test <- cbind(test.data[,-14], (test.data[,-14])^2)
+colnames(x_sq.test)[14:26] <- paste(colnames(x_sq.test)[14:26], "sqr")
+
+x_sqr.test <- model.matrix(~ ., data = x_sq.test)[,-1]
+reg_lasso_sqr_predict.test <- predict(reg_lasso_sqr, newx = x_sqr.test, s = cv_lasso_sqr$lambda.1se)
+mse_lasso_sqr.test <- mean((reg_lasso_sqr_predict.test - log(test.data$medv))^2)
+
+mse.test <- rbind(mse_origin.test, mse_lasso.test, mse_ridge.test, mse_lasso_sqr.test)
+mse.test
+```
+The model that contains the square term of all variables using Lasso fits best both in-sample and out-of-sample. 
+
